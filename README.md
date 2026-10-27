@@ -5,6 +5,20 @@
 - Every file is checked against a SHA-256 manifest built into the app. Broken or partial files never reach their final location.
 - Built with [SDL3-uwp](https://github.com/XboxEmulationHub/SDL3-uwp), C++/WinRT and [nayuki's QR code generator](https://github.com/nayuki/QR-Code-generator). Builds and packages on Linux.
 
+<table>
+  <tr>
+    <td><img src="assets/screenshots/xbox-upload.png" alt="Xbox: upload screen with QR code, progress and an invalid file" width="640"></td>
+    <td><img src="assets/screenshots/phone-upload.png" alt="Phone: upload page with the files still needed" width="220"></td>
+  </tr>
+  <tr>
+    <td>On the TV: QR code, upload progress and a file rejected for a bad hash.</td>
+    <td>On the phone: the upload page.</td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="assets/screenshots/xbox-ready.png" alt="Xbox: all files are ready" width="640"><br>Once every file is verified.</td>
+  </tr>
+</table>
+
 ## Using the app
 
 On first start the app checks which files are already there, then shows **Get your files in**:
