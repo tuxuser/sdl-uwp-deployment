@@ -1,0 +1,64 @@
+From eae2254329f94fb2e008e9349d6ce3485c7ab42e Mon Sep 17 00:00:00 2001
+From: tuxuser <462620+tuxuser@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 01:47:59 +0100
+Subject: [PATCH 1/2] Use a local pixel format helper in the WinRT video driver
+
+---
+ src/video/winrt/SDL_winrtvideo.cpp | 13 +++++--------
+ 1 file changed, 5 insertions(+), 8 deletions(-)
+
+diff --git a/src/video/winrt/SDL_winrtvideo.cpp b/src/video/winrt/SDL_winrtvideo.cpp
+index 5e832c9cb..99cc597a4 100644
+--- a/src/video/winrt/SDL_winrtvideo.cpp
++++ b/src/video/winrt/SDL_winrtvideo.cpp
+@@ -492,8 +492,8 @@ bool WINRT_VideoInit(SDL_VideoDevice *_this)
+     return true;
+ }
+ 
+-#ifdef SDL_VIDEO_OPENGL_WGL
+-SDL_PixelFormat D3D11_DXGIFormatToSDLPixelFormat(DXGI_FORMAT dxgiFormat)
++// Local copy so the video driver does not depend on the D3D11 renderer.
++static SDL_PixelFormat WINRT_DXGIFormatToSDLPixelFormat(DXGI_FORMAT dxgiFormat)
+ {
+     switch (dxgiFormat) {
+     case DXGI_FORMAT_B8G8R8A8_UNORM:
+@@ -504,9 +504,6 @@ SDL_PixelFormat D3D11_DXGIFormatToSDLPixelFormat(DXGI_FORMAT dxgiFormat)
+         return SDL_PIXELFORMAT_UNKNOWN;
+     }
+ }
+-#else
+-extern "C" Uint32 D3D11_DXGIFormatToSDLPixelFormat(DXGI_FORMAT dxgiFormat);
+-#endif
+ 
+ static void WINRT_DXGIModeToSDLDisplayMode(const DXGI_MODE_DESC *dxgiMode, SDL_DisplayMode *sdlMode)
+ {
+@@ -515,7 +512,7 @@ static void WINRT_DXGIModeToSDLDisplayMode(const DXGI_MODE_DESC *dxgiMode, SDL_D
+     sdlMode->h = dxgiMode->Height;
+     sdlMode->refresh_rate_numerator = dxgiMode->RefreshRate.Numerator;
+     sdlMode->refresh_rate_denominator = dxgiMode->RefreshRate.Denominator;
+-    sdlMode->format = D3D11_DXGIFormatToSDLPixelFormat(dxgiMode->Format);
++    sdlMode->format = WINRT_DXGIFormatToSDLPixelFormat(dxgiMode->Format);
+ }
+ 
+ static bool WINRT_AddDisplaysForOutput(SDL_VideoDevice *_this, IDXGIAdapter1 *dxgiAdapter1, int outputIndex)
+@@ -574,7 +571,7 @@ static bool WINRT_AddDisplaysForOutput(SDL_VideoDevice *_this, IDXGIAdapter1 *dx
+             mode.w = (dxgiOutputDesc.DesktopCoordinates.right - dxgiOutputDesc.DesktopCoordinates.left);
+             mode.h = (dxgiOutputDesc.DesktopCoordinates.bottom - dxgiOutputDesc.DesktopCoordinates.top);
+         }
+-        mode.format = D3D11_DXGIFormatToSDLPixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM);
++        mode.format = WINRT_DXGIFormatToSDLPixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM);
+         display.desktop_mode = mode;
+     } else if (FAILED(hr)) {
+         WIN_SetErrorFromHRESULT(__FUNCTION__ ", IDXGIOutput::FindClosestMatchingMode failed", hr);
+@@ -685,7 +682,7 @@ static bool WINRT_AddDisplaysForAdapter(SDL_VideoDevice *_this, IDXGIFactory2 *d
+                 mode.h = (int)SDL_floorf(coreWin->Bounds.Height);
+ #endif
+                 mode.pixel_density = WINRT_DISPLAY_PROPERTY(LogicalDpi) / 96.0f;
+-                mode.format = D3D11_DXGIFormatToSDLPixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM);
++                mode.format = WINRT_DXGIFormatToSDLPixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM);
+ 
+                 display.desktop_mode = mode;
+                 bool error = (SDL_AddVideoDisplay(&display, false) == 0);
+-- 
+2.56.0
+

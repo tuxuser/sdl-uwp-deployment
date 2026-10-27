@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upload game files</title>
+<style>
+  :root { color-scheme: light dark; --accent: #2e7d32; --bad: #c62828; --muted: #888; }
+  body { font-family: system-ui, sans-serif; margin: 0 auto; max-width: 760px; padding: 16px; }
+  h1 { font-size: 1.5rem; margin: 0 0 12px; }
+  .drop { border: 2px dashed var(--muted); border-radius: 8px; padding: 24px; text-align: center; }
+  .drop.over { border-color: var(--accent); }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 12px; }
+  label.button { border: 1px solid var(--muted); border-radius: 6px; padding: 8px 14px; cursor: pointer; }
+  input[type=file] { display: none; }
+  .bar { height: 10px; background: #8884; border-radius: 5px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .row { margin: 10px 0; }
+  .small { color: var(--muted); font-size: .9rem; }
+  ul { padding-left: 18px; }
+  li.bad { color: var(--bad); }
+  li.ok { color: var(--accent); }
+  #log li { word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>Upload game files</h1>
+<div class="drop" id="drop">
+  Drop files or a folder here
+  <div class="buttons">
+    <label class="button">Choose files<input type="file" id="files" multiple></label>
+    <label class="button">Choose folder<input type="file" id="folder" webkitdirectory multiple></label>
+  </div>
+</div>
+
+<div class="row"><b id="summary">Loading...</b></div>
+<div class="row small">Overall</div>
+<div class="bar"><div id="overall"></div></div>
+<div class="row small" id="currentLabel">Current file</div>
+<div class="bar"><div id="current"></div></div>
+<div class="row small" id="serverError"></div>
+
+<h2>Still needed</h2>
+<ul id="missing"></ul>
+<h2>This session</h2>
+<ul id="log"></ul>
+
+<script>
+"use strict";
+let status = null;
+let busy = false;
+const inflight = new Map();  // manifest path -> bytes sent
+
+function lower(s) { return s.toLowerCase(); }
+
+// Same rule as the console: exact path, else the shortest leading-folder
+// strip whose suffix names exactly one manifest file.
+function matchPath(path) {
+  const files = status ? status.files : [];
+  const exact = files.find(f => lower(f.path) === lower(path));
+  if (exact) return exact;
+  let parts = path.split("/");
+  while (parts.length) {
+    const suffix = lower(parts.join("/"));
+    const hits = files.filter(f => lower(f.path) === suffix || lower(f.path).endsWith("/" + suffix));
+    if (hits.length === 1) return hits[0];
+    parts = parts.slice(1);
+  }
+  return null;
+}
+
+function fmt(bytes) {
+  const units = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
+  return bytes.toFixed(i ? 1 : 0) + " " + units[i];
+}
+
+function log(text, cls) {
+  const li = document.createElement("li");
+  li.textContent = text;
+  if (cls) li.className = cls;
+  document.getElementById("log").prepend(li);
+}
+
+function render() {
+  if (!status) return;
+  let sent = 0;
+  for (const v of inflight.values()) sent += v;
+  document.getElementById("summary").textContent =
+    `${status.ready} of ${status.count} files ready, ${fmt(status.bytes_ready)} of ${fmt(status.bytes_total)}` +
+    (status.checking ? " (console is checking files)" : "");
+  const overall = status.bytes_total ? (status.bytes_ready + sent) / status.bytes_total : 1;
+  document.getElementById("overall").style.width = Math.min(100, overall * 100) + "%";
+  document.getElementById("serverError").textContent = status.error || "";
+  const list = document.getElementById("missing");
+  list.innerHTML = "";
+  for (const f of status.files) {
+    if (f.state === "ok") continue;
+    const li = document.createElement("li");
+    li.textContent = `${f.path} (${fmt(f.size)}) - ${f.state}`;
+    if (f.state === "bad-hash") li.className = "bad";
+    list.appendChild(li);
+  }
+  if (!list.children.length) {
+    const li = document.createElement("li");
+    li.className = "ok";
+    li.textContent = "Nothing. All files are on the console.";
+    list.appendChild(li);
+  }
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/status", { cache: "no-store" });
+    status = await r.json();
+    render();
+  } catch (e) { /* console unreachable for a moment */ }
+}
+
+async function poll() {
+  await refresh();
+  setTimeout(poll, 700);
+}
+
+function upload(file, entry) {
+  return new Promise(resolve => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", "/upload/" + entry.path.split("/").map(encodeURIComponent).join("/"));
+    xhr.upload.onprogress = e => {
+      // With two uploads running, the bar follows whichever reported last.
+      inflight.set(entry.path, e.loaded);
+      document.getElementById("currentLabel").textContent = `Current file: ${entry.path}`;
+      document.getElementById("current").style.width = (e.loaded / file.size * 100) + "%";
+      render();
+    };
+    const done = async (ok, text) => {
+      log(`${entry.path}: ${text}`, ok ? "ok" : "bad");
+      // Refresh before dropping the in-flight bytes, so the overall bar and
+      // the skip check never use a stale state.
+      await refresh();
+      inflight.delete(entry.path);
+      render();
+      resolve();
+    };
+    xhr.onload = () => {
+      let text = xhr.statusText;
+      try { text = JSON.parse(xhr.responseText).result; } catch (e) {}
+      done(xhr.status === 200, xhr.status === 200 ? "uploaded and verified" : `rejected: ${text}`);
+    };
+    xhr.onerror = () => done(false, "connection lost, try again");
+    xhr.send(file);
+  });
+}
+
+async function handle(items) {
+  if (busy) { log("Wait for the current uploads to finish.", "bad"); return; }
+  if (!status) { log("Not connected to the console yet.", "bad"); return; }
+  busy = true;
+  await refresh();
+  const queue = [];
+  const seen = new Set();
+  for (const { file, path } of items) {
+    const entry = matchPath(path);
+    if (!entry) { log(`${path}: not a needed file, skipped`); continue; }
+    if (entry.state === "ok" || seen.has(entry.path)) continue;
+    if (file.size !== entry.size) {
+      log(`${path}: size ${file.size} does not match ${entry.size}, skipped`, "bad");
+      continue;
+    }
+    seen.add(entry.path);
+    queue.push({ file, entry });
+  }
+  if (!queue.length) log("Nothing new to upload.");
+  const worker = async () => {
+    while (queue.length) {
+      const job = queue.shift();
+      await upload(job.file, job.entry);
+    }
+  };
+  await Promise.all([worker(), worker()]);
+  document.getElementById("current").style.width = "0";
+  document.getElementById("currentLabel").textContent = "Current file";
+  busy = false;
+}
+
+function fromInput(input) {
+  const items = [...input.files].map(f => ({ file: f, path: f.webkitRelativePath || f.name }));
+  input.value = "";
+  handle(items);
+}
+
+async function walk(entry, prefix, out) {
+  if (entry.isFile) {
+    const file = await new Promise((res, rej) => entry.file(res, rej));
+    out.push({ file, path: prefix + entry.name });
+  } else if (entry.isDirectory) {
+    const reader = entry.createReader();
+    for (;;) {
+      const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+      if (!batch.length) break;
+      for (const child of batch) await walk(child, prefix + entry.name + "/", out);
+    }
+  }
+}
+
+document.getElementById("files").addEventListener("change", e => fromInput(e.target));
+document.getElementById("folder").addEventListener("change", e => fromInput(e.target));
+const drop = document.getElementById("drop");
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", async e => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  const entries = [...e.dataTransfer.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  const items = [];
+  if (entries.length) {
+    try {
+      for (const entry of entries) await walk(entry, "", items);
+    } catch (err) {
+      log(`Could not read the dropped files: ${err}`, "bad");
+      return;
+    }
+  } else {
+    for (const f of e.dataTransfer.files) items.push({ file: f, path: f.name });
+  }
+  handle(items);
+});
+poll();
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+From c6c767153dfc89579d8b8e8a33ed49e14bedaa74 Mon Sep 17 00:00:00 2001
+From: tuxuser <462620+tuxuser@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 13:52:33 +0100
+Subject: [PATCH 2/2] Set the thread ID in the stdcpp thread backend
+
+SDL_GetThreadID() returned 0 for every SDL thread, so the WASAPI management
+thread did not recognize itself and waited on its own task.
+---
+ src/thread/stdcpp/SDL_systhread.cpp | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/src/thread/stdcpp/SDL_systhread.cpp b/src/thread/stdcpp/SDL_systhread.cpp
+index c718d23dc..0b0ffb2f5 100644
+--- a/src/thread/stdcpp/SDL_systhread.cpp
++++ b/src/thread/stdcpp/SDL_systhread.cpp
+@@ -36,7 +36,10 @@ extern "C" {
+ 
+ static void RunThread(void *args)
+ {
+-    SDL_RunThread((SDL_Thread *)args);
++    SDL_Thread *thread = (SDL_Thread *)args;
++    // SDL_GetThreadID() reads this, e.g. to detect a call from the WASAPI management thread itself.
++    thread->threadid = SDL_GetCurrentThreadID();
++    SDL_RunThread(thread);
+ }
+ 
+ extern "C"
+@@ -46,7 +49,11 @@ bool SDL_SYS_CreateThread(SDL_Thread *thread,
+ {
+     try {
+         // !!! FIXME: no way to set a thread stack size here.
+-        thread->handle = (void *)new std::thread(RunThread, thread);
++        std::thread *cpp_thread = new std::thread(RunThread, thread);
++        // Also set by RunThread, because the new thread may read it before this returns.
++        const auto cpp_thread_id = cpp_thread->get_id();
++        SDL_memcpy(&thread->threadid, &cpp_thread_id, sizeof(std::thread::id));
++        thread->handle = (void *)cpp_thread;
+         return true;
+     } catch (std::system_error &ex) {
+         return SDL_SetError("unable to start a C++ thread: code=%d; %s", ex.code().value(), ex.what());
+-- 
+2.56.0
+
